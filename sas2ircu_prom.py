@@ -83,7 +83,7 @@ import subprocess
 import sys
 
 # raidCommand is the cli utility name which is executed to get the information
-raidCommand = "/root/sas2ircu"
+raidCommand = "/usr/local/bin/sas2ircu"
 
 # volumeAttrs is a list of key:value pairs where key is the volume fieldname of the output from sas2ircu cli utility and value is the internal name used in *OutputOrder list. use lower case letters!
 volumeAttrs = {'volume id': 'volumeid', 'status of volume': 'status', 'volume wwid': 'wwid', 'raid level': 'raid',
