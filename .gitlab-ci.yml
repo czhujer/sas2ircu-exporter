@@ -1,0 +1,15 @@
+variables:
+  VERSION: "0.1"
+
+stages:
+  - image
+
+docker build:
+  stage: image
+  image: docker:17.05.0-ce-git
+  tags:
+    - dind
+  script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker build -t "$CI_REGISTRY_IMAGE:$VERSION" .
+    - docker push "$CI_REGISTRY_IMAGE:$VERSION"
