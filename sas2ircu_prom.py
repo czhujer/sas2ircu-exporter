@@ -81,6 +81,8 @@
 
 import subprocess
 import sys
+import time
+import BaseHTTPServer, SimpleHTTPServer
 
 # raidCommand is the cli utility name which is executed to get the information
 raidCommand = "/usr/local/bin/sas2ircu"
@@ -100,7 +102,6 @@ volumeOutputOrder = ['status', 'raid', 'size']
 # diskOutputOrder = ['status', 'sasaddr', 'manufacturer', 'model', 'serial', 'protocol', 'type']
 diskOutputOrder = ['status', 'model', 'serial', 'protocol', 'type']
 
-
 def returnVolumeTpl():
     volumeTpl = {'controller': '-1'}
     for name, code in volumeAttrs.items():
@@ -115,124 +116,144 @@ def returnDiskTpl():
     return diskTpl
 
 
-# checkNextController is a flag if current controller (int 0-255) is present and so the next controller id should be checked
-checkNextController = True
-listVolumes = []
-listDisks = []
+def DataCollector():
 
-for i in range(0, 255):
-    if checkNextController:
-        cmd = subprocess.Popen(raidCommand + " " + str(i) + " DISPLAY", shell=True, stdout=subprocess.PIPE,
-                               stderr=subprocess.STDOUT)
-        mode = "unknown"
-        volumeNr = 0
-        diskNr = 0
-        volume = returnVolumeTpl()
-        disk = returnDiskTpl()
-        for line in cmd.stdout:
-            line = line.strip().lower()
-            if "sas2ircu: not found" in line:
-                checkNextController = False
-                break
-            checkIfPresentLine = "SAS2IRCU: No Controller Found at index " + str(i) + "."
-            checkIfPresentLine = checkIfPresentLine.lower()
-            if line == checkIfPresentLine:
-                checkNextController = False
-                break
-            parts = map(str.strip, line.split(":"))
-            if parts[0] == "sas2ircu" or parts[0].startswith("------") or parts[0].startswith("ir volume") or len(
-                    parts[0]) == 0:
-                if mode == "volume":
-                    if volume['controller'] != "-1":
-                        listVolumes.append(volume)
-                        volume = returnVolumeTpl()
-                if mode == "harddisk":
-                    if disk['controller'] != "-1":
-                        listDisks.append(disk)
-                        disk = returnDiskTpl()
-            if parts[0] == "volume id":
-                volume['controller'] = str(i)
-                volume['volume'] = parts[1]
-                mode = "volume"
-            if parts[0] == "device is a hard disk":
-                disk['controller'] = str(i)
-                mode = "harddisk"
-            if mode == "volume" and len(parts) > 1:
-                if parts[0] in volumeAttrs:
-                    volume[volumeAttrs[parts[0]]] = parts[1].replace(" ", "_")
-            if mode == "harddisk" and len(parts) > 1:
-                if parts[0] in diskAttrs:
-                    disk[diskAttrs[parts[0]]] = parts[1].replace(" ", "_")
-    else:
-        break
+    http_response = ""
 
-# output the checks in order of volumeOutputOrder and diskOutputOrder
+    # checkNextController is a flag if current controller (int 0-255) is present and so the next controller id should be checked
+    checkNextController = True
+    listVolumes = []
+    listDisks = []
 
-metrics = {}
-
-for volume in listVolumes:
-    metric_name_prefix = "node_sas2ircu_volume"
-    first_label = "id=\"" + volume['controller'] + "_" + volume['volumeid'] + "\""
-
-    labels = ""
-    for name in volumeOutputOrder:
-        if name == "raid":
-            metric_value = volume[name].replace('raid', '')
+    for i in range(0, 255):
+        if checkNextController:
+            cmd = subprocess.Popen(raidCommand + " " + str(i) + " DISPLAY", shell=True, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT)
+            mode = "unknown"
+            volumeNr = 0
+            diskNr = 0
+            volume = returnVolumeTpl()
+            disk = returnDiskTpl()
+            for line in cmd.stdout:
+                line = line.strip().lower()
+                if "sas2ircu: not found" in line:
+                    checkNextController = False
+                    break
+                checkIfPresentLine = "SAS2IRCU: No Controller Found at index " + str(i) + "."
+                checkIfPresentLine = checkIfPresentLine.lower()
+                if line == checkIfPresentLine:
+                    checkNextController = False
+                    break
+                parts = map(str.strip, line.split(":"))
+                if parts[0] == "sas2ircu" or parts[0].startswith("------") or parts[0].startswith("ir volume") or len(
+                        parts[0]) == 0:
+                    if mode == "volume":
+                        if volume['controller'] != "-1":
+                            listVolumes.append(volume)
+                            volume = returnVolumeTpl()
+                    if mode == "harddisk":
+                        if disk['controller'] != "-1":
+                            listDisks.append(disk)
+                            disk = returnDiskTpl()
+                if parts[0] == "volume id":
+                    volume['controller'] = str(i)
+                    volume['volume'] = parts[1]
+                    mode = "volume"
+                if parts[0] == "device is a hard disk":
+                    disk['controller'] = str(i)
+                    mode = "harddisk"
+                if mode == "volume" and len(parts) > 1:
+                    if parts[0] in volumeAttrs:
+                        volume[volumeAttrs[parts[0]]] = parts[1].replace(" ", "_")
+                if mode == "harddisk" and len(parts) > 1:
+                    if parts[0] in diskAttrs:
+                        disk[diskAttrs[parts[0]]] = parts[1].replace(" ", "_")
         else:
-            metric_value = volume[name]
-
-        if name == "status":
-            metric_name = metric_name_prefix + "_" + name + "_ok"
-            if metric_value == 'okay_(oky)':
-                metric_value = "1"
-            else:
-                metric_value = "0"
-        else:
-            metric_name = metric_name_prefix + "_" + name
-
-        key = metric_name + "_" + volume['controller'] + "_" + volume['volumeid']
-
-        metrics[key] = {}
-        metrics[key]['name'] = metric_name
-        metrics[key]['first_label'] = first_label
-        metrics[key]['value'] = metric_value
-
-for disk in listDisks:
-    metric_name_prefix = "node_sas2ircu_disk"
-    first_label = "id=\"" + disk['controller'] + "_" + disk['slot'] + "\""
-
-    labels = ",model=\"" + disk['model'] + "\""
-    labels = labels + ",serial=\"" + disk['serial'] + "\""
-
-    for name in diskOutputOrder:
-        if name == "model" or name == "serial":
             break
-        if name == "status":
-            metric_name = metric_name_prefix + "_" + name + "_ok"
-            if disk[name] == "optimal_(opt)":
-                disk[name] = "1"
+
+    # output the checks in order of volumeOutputOrder and diskOutputOrder
+
+    metrics = {}
+
+    for volume in listVolumes:
+        metric_name_prefix = "node_sas2ircu_volume"
+        first_label = "id=\"" + volume['controller'] + "_" + volume['volumeid'] + "\""
+
+        labels = ""
+        for name in volumeOutputOrder:
+            if name == "raid":
+                metric_value = volume[name].replace('raid', '')
             else:
-                disk[name] = "0"
-        else:
-            metric_name = metric_name_prefix + "_" + name
+                metric_value = volume[name]
 
-        key = metric_name + "_" + disk['controller'] + "_" + disk['slot']
+            if name == "status":
+                metric_name = metric_name_prefix + "_" + name + "_ok"
+                if metric_value == 'okay_(oky)':
+                    metric_value = "1"
+                else:
+                    metric_value = "0"
+            else:
+                metric_name = metric_name_prefix + "_" + name
 
-        metrics[key] = {}
-        metrics[key]['name'] = metric_name
-        metrics[key]['first_label'] = first_label
-        metrics[key]['labels'] = labels
-        metrics[key]['value'] = disk[name]
+            key = metric_name + "_" + volume['controller'] + "_" + volume['volumeid']
 
-for key, params in sorted(metrics.iteritems()):
-    first_label = ""
-    labels = ""
-    for param, value in params.iteritems():
-        if param == "first_label":
-            first_label = value
-        if param == "labels":
-            labels = metrics[key]['labels']
+            metrics[key] = {}
+            metrics[key]['name'] = metric_name
+            metrics[key]['first_label'] = first_label
+            metrics[key]['value'] = metric_value
 
-    print metrics[key]['name'] + "{" + first_label + labels + "}" + " " + metrics[key]['value']
+    for disk in listDisks:
+        metric_name_prefix = "node_sas2ircu_disk"
+        first_label = "id=\"" + disk['controller'] + "_" + disk['slot'] + "\""
 
-sys.stdout.flush()
+        labels = ",model=\"" + disk['model'] + "\""
+        labels = labels + ",serial=\"" + disk['serial'] + "\""
+
+        for name in diskOutputOrder:
+            if name == "model" or name == "serial":
+                break
+            if name == "status":
+                metric_name = metric_name_prefix + "_" + name + "_ok"
+                if disk[name] == "optimal_(opt)":
+                    disk[name] = "1"
+                else:
+                    disk[name] = "0"
+            else:
+                metric_name = metric_name_prefix + "_" + name
+
+            key = metric_name + "_" + disk['controller'] + "_" + disk['slot']
+
+            metrics[key] = {}
+            metrics[key]['name'] = metric_name
+            metrics[key]['first_label'] = first_label
+            metrics[key]['labels'] = labels
+            metrics[key]['value'] = disk[name]
+
+    for key, params in sorted(metrics.iteritems()):
+        first_label = ""
+        labels = ""
+        for param, value in params.iteritems():
+            if param == "first_label":
+                first_label = value
+            if param == "labels":
+                labels = metrics[key]['labels']
+
+        http_response += metrics[key]['name'] + "{" + first_label + labels + "}" + " " + metrics[key]['value']
+        http_response += "\n"
+
+    http_response += "node_sas2ircu_scrape_timestamp " + str(int(time.time())) + "\n"
+
+    return http_response
+
+class MetricsHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
+
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        data = DataCollector()
+        self.wfile.write(data)
+
+httpd = BaseHTTPServer.HTTPServer(("", 9655), MetricsHandler)
+
+print "starting web server at port 9655"
+httpd.serve_forever()
